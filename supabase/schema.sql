@@ -25,7 +25,8 @@ create table if not exists questions (
   topic text not null,
   text text not null,
   options jsonb not null,     -- масив із 5 рядків
-  correct int not null        -- індекс правильного варіанта в options
+  correct int not null,       -- індекс правильного варіанта в options
+  image text                  -- ім'я фото в site/img без розширення
 );
 
 create table if not exists attempts (
@@ -101,7 +102,7 @@ begin
 
   -- питання в порядку спроби, варіанти перемішані; правильну відповідь не віддаємо
   select json_agg(json_build_object(
-           'id', q.id, 'text', q.text,
+           'id', q.id, 'text', q.text, 'image', q.image,
            'options', (select json_agg(json_build_object('k', o.ord - 1, 't', o.val) order by random())
                        from jsonb_array_elements_text(q.options) with ordinality as o(val, ord)))
          order by array_position(a.question_ids, q.id))

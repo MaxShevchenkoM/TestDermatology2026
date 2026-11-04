@@ -77,3 +77,6 @@ td:nth-child(2), td:nth-child(4), td:nth-child(9) { white-space: nowrap; }
 .tabs button:not([data-t]) { background: #fff; }
 .tabs #xlsxBtn { background: var(--accent); color: #fff; border-color: var(--accent); }
 .bar #progress { white-space: nowrap; }
+.qimg { margin: 0 0 18px; text-align: center; background: #f6f5f2; border-radius: 8px; padding: 8px; }
+.qimg img { max-width: 100%; max-height: 420px; border-radius: 6px; cursor: zoom-in; }
+.qimg.zoom img { max-height: none; cursor: zoom-out; }

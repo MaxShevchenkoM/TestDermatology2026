@@ -43,6 +43,7 @@
     <div class="card">
       <div class="qnum" id="qnum"></div>
       <p class="qtext" id="qtext"></p>
+      <figure class="qimg hidden" id="qimgBox"><img id="qimg" alt="Клінічне фото до задачі"></figure>
       <div id="opts"></div>
       <div class="row" style="margin-top:14px">
         <button class="ghost" id="prevBtn">← Назад</button><span class="spacer"></span>
@@ -74,6 +75,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const LETTERS = ["A", "B", "C", "D", "E"];
+const IMG = (n) => `img/${n}.jpg`;
 let students = [], S = null, cur = 0, tick = null, submitting = false;
 
 $("title").textContent = EDKI_CONFIG.TITLE || "Тест у форматі ЄДКІ";
@@ -134,6 +136,7 @@ function beginTest() {
   $("who").textContent = S.name;
   $("nav").innerHTML = S.questions.map((_, i) => `<button data-i="${i}">${i + 1}</button>`).join("");
   $("nav").onclick = (e) => { if (e.target.dataset.i) go(+e.target.dataset.i); };
+  S.questions.forEach((q) => { if (q.image) new Image().src = IMG(q.image); }); // попереднє завантаження фото
   go(0);
   clearInterval(tick); tick = setInterval(updTimer, 500); updTimer();
   window.onbeforeunload = () => "Тест ще не здано.";
@@ -144,6 +147,8 @@ function go(i) {
   const q = S.questions[cur];
   $("qnum").textContent = `Питання ${cur + 1} з ${S.questions.length}`;
   $("qtext").textContent = q.text;
+  $("qimgBox").classList.toggle("hidden", !q.image);
+  if (q.image) $("qimg").src = IMG(q.image);
   $("opts").innerHTML = q.options.map((o, j) =>
     `<div class="opt ${S.answers[q.id] === o.k ? "sel" : ""}" data-k="${o.k}"><span class="L">${LETTERS[j]}</span><span>${esc(o.t)}</span></div>`).join("");
   $("prevBtn").disabled = cur === 0; $("nextBtn").disabled = cur === S.questions.length - 1;
@@ -154,6 +159,7 @@ $("opts").onclick = (e) => {
   S.answers[S.questions[cur].id] = Number(el.dataset.k); persist(); go(cur);
 };
 $("prevBtn").onclick = () => go(cur - 1);
+$("qimg").onclick = () => $("qimgBox").classList.toggle("zoom");
 $("nextBtn").onclick = () => go(cur + 1);
 
 function updNav() {
