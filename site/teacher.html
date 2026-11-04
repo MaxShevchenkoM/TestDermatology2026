@@ -30,6 +30,12 @@
         <button class="ghost" id="saveBtn">Зберегти</button>
         <button id="toggleBtn"></button>
       </div>
+      <div class="row small" style="margin-top:10px">
+        <span class="spacer"></span>
+        <input type="password" id="newPw" placeholder="Новий пароль викладача" style="width:220px;padding:7px 10px">
+        <button class="ghost" id="pwBtn" style="padding:7px 14px">Змінити пароль</button>
+        <span id="pwMsg" class="muted"></span>
+      </div>
       <div class="stats" id="stats"></div>
     </div>
 
@@ -119,6 +125,12 @@ async function setSettings(open) {
   try { await rpc("teacher_set", { p_pw: PW, p_open: open, p_n: +$("nQ").value, p_minutes: +$("nMin").value }); load(); }
   catch (e) { err("mainErr", e.message); }
 }
+$("pwBtn").onclick = async () => {
+  const np = $("newPw").value;
+  try { await rpc("teacher_change_pw", { p_pw: PW, p_new: np }); PW = np; try { sessionStorage.setItem("edki:pw", PW); } catch (e) {}
+        $("newPw").value = ""; $("pwMsg").textContent = "Пароль змінено"; }
+  catch (e) { $("pwMsg").textContent = e.message; }
+};
 $("toggleBtn").onclick = () => setSettings(!D.settings.is_open);
 $("saveBtn").onclick = () => setSettings(D.settings.is_open);
 

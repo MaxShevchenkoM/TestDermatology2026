@@ -9,7 +9,7 @@
 Банк питань і списки груп (`private/`) у репозиторій не потрапляють — вони завантажуються в Supabase через `private/seed.sql`.
 
 ## Запуск
-1. supabase.com → New project. SQL Editor → вставити `supabase/schema.sql` (замінити пароль `zmini-mene` в кінці) → Run.
+1. Проєкт Supabase: dxxfkkodqltfyrzhsuoc (eu-central-1). Схема — `supabase/schema.sql`, дані — `private/seed.sql`.
 2. SQL Editor → вставити `private/seed.sql` → Run.
 3. Project Settings → API → скопіювати Project URL і anon public key у `site/config.js`.
 4. GitHub → Settings → Pages → Source: GitHub Actions (workflow вже є).

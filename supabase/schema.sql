@@ -1,8 +1,8 @@
 -- ЄДКІ-тест «Інфекційна дерматологія» — схема для Supabase
 -- Вставити цілком у Supabase → SQL Editor → Run.
--- Після запуску ОБОВ'ЯЗКОВО змінити пароль викладача (останній рядок файлу).
+-- Після запуску змініть пароль викладача на сторінці teacher.html.
 
-create extension if not exists pgcrypto;
+create extension if not exists pgcrypto with schema extensions;
 
 -- ---------- Таблиці ----------
 create table if not exists settings (
@@ -54,6 +54,10 @@ create or replace function _hdr(h text) returns text language sql stable as $$
   select coalesce(current_setting('request.headers', true)::json ->> h, '')
 $$;
 
+create or replace function _ip() returns text language sql stable as $$
+  select coalesce(nullif(_hdr('cf-connecting-ip'), ''), split_part(_hdr('x-forwarded-for'), ',', 1))
+$$;
+
 create or replace function _ects(pct numeric) returns text language sql immutable as $$
   select case when pct >= 90 then 'A' when pct >= 82 then 'B' when pct >= 74 then 'C'
               when pct >= 64 then 'D' when pct >= 60 then 'E' when pct >= 35 then 'FX' else 'F' end
@@ -68,7 +72,7 @@ $$;
 drop function if exists public_students();
 create or replace function public_students()
 returns table (id int, grp text, name text, done boolean, is_open boolean, n_q int, mins int)
-language sql security definer set search_path = public as $$
+language sql security definer set search_path = public, extensions as $$
   select s.id, s.grp, s.name,
          exists (select 1 from attempts a where a.student_id = s.id and a.finished_at is not null),
          (select is_open from settings), (select n_questions from settings), (select time_limit_min from settings)
@@ -76,7 +80,7 @@ language sql security definer set search_path = public as $$
 $$;
 
 create or replace function start_attempt(p_student int)
-returns json language plpgsql security definer set search_path = public as $$
+returns json language plpgsql security definer set search_path = public, extensions as $$
 declare st settings; a attempts; qs json;
 begin
   select * into st from settings;
@@ -91,7 +95,7 @@ begin
     insert into attempts (student_id, question_ids, ip, user_agent)
     values (p_student,
             array(select id from questions order by random() limit st.n_questions),
-            split_part(_hdr('x-forwarded-for'), ',', 1), _hdr('user-agent'))
+            _ip(), _hdr('user-agent'))
     returning * into a;
   end if;
 
@@ -110,7 +114,7 @@ begin
 end $$;
 
 create or replace function submit_attempt(p_attempt uuid, p_token uuid, p_answers jsonb)
-returns json language plpgsql security definer set search_path = public as $$
+returns json language plpgsql security definer set search_path = public, extensions as $$
 declare a attempts; nc int; nt int;
 begin
   select * into a from attempts where id = p_attempt and token = p_token for update;
@@ -122,7 +126,7 @@ begin
   from questions q where q.id = any(a.question_ids);
 
   update attempts set finished_at = now(), answers = p_answers, n_correct = nc, n_total = nt,
-         ip_finish = split_part(_hdr('x-forwarded-for'), ',', 1)
+         ip_finish = _ip()
    where id = a.id;
 
   return json_build_object('n_correct', nc, 'n_total', nt,
@@ -131,7 +135,7 @@ begin
 end $$;
 
 -- ---------- Функції для викладача ----------
-create or replace function _check_pw(p_pw text) returns void language plpgsql security definer set search_path = public as $$
+create or replace function _check_pw(p_pw text) returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not exists (select 1 from settings where teacher_pw = crypt(p_pw, teacher_pw)) then
     raise exception 'Невірний пароль';
@@ -139,7 +143,7 @@ begin
 end $$;
 
 create or replace function teacher_results(p_pw text)
-returns json language plpgsql security definer set search_path = public as $$
+returns json language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform _check_pw(p_pw);
   return json_build_object(
@@ -167,25 +171,33 @@ begin
 end $$;
 
 create or replace function teacher_set(p_pw text, p_open boolean, p_n int, p_minutes int)
-returns void language plpgsql security definer set search_path = public as $$
+returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform _check_pw(p_pw);
-  update settings set is_open = p_open, n_questions = p_n, time_limit_min = p_minutes;
+  update settings set is_open = p_open, n_questions = p_n, time_limit_min = p_minutes where id = 1;
 end $$;
 
 -- скинути спробу студента (напр., зник інтернет) — студент зможе пройти заново
 create or replace function teacher_reset(p_pw text, p_student int)
-returns void language plpgsql security definer set search_path = public as $$
+returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform _check_pw(p_pw);
   delete from attempts where student_id = p_student;
 end $$;
 
-revoke all on function _check_pw(text), _hdr(text) from public, anon, authenticated;
+create or replace function teacher_change_pw(p_pw text, p_new text)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform _check_pw(p_pw);
+  if length(p_new) < 6 then raise exception 'Пароль має містити щонайменше 6 символів'; end if;
+  update settings set teacher_pw = crypt(p_new, gen_salt('bf')) where id = 1;
+end $$;
+
+revoke all on function _check_pw(text), _hdr(text), _ip() from public, anon, authenticated;
 grant execute on function public_students(), start_attempt(int), submit_attempt(uuid, uuid, jsonb),
-  teacher_results(text), teacher_set(text, boolean, int, int), teacher_reset(text, int) to anon;
+  teacher_results(text), teacher_set(text, boolean, int, int), teacher_reset(text, int), teacher_change_pw(text, text) to anon;
 
 -- ---------- Пароль викладача ----------
--- ЗАМІНІТЬ 'zmini-mene' на свій пароль перед запуском:
-insert into settings (id, teacher_pw) values (1, crypt('zmini-mene', gen_salt('bf')))
-on conflict (id) do update set teacher_pw = excluded.teacher_pw;
+-- Початковий пароль 'zmini-mene' — змініть його на сторінці викладача (кнопка «Змінити пароль»).
+insert into settings (id, teacher_pw) values (1, extensions.crypt('zmini-mene', extensions.gen_salt('bf')))
+on conflict (id) do nothing;
