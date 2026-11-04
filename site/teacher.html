@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Тест ЄДКІ — Викладач</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+<div class="wrap wide">
+  <header class="top"><h1>Результати тесту</h1><span class="sub">сторінка викладача</span></header>
+
+  <section id="login" class="card" style="max-width:420px">
+    <label for="pw" style="margin-top:0">Пароль викладача</label>
+    <input type="password" id="pw" autocomplete="current-password">
+    <div class="row" style="margin-top:14px"><span class="spacer"></span><button id="loginBtn">Увійти</button></div>
+    <div id="loginErr" class="err hidden"></div>
+  </section>
+
+  <section id="main" class="hidden">
+    <div class="card">
+      <div class="row">
+        <b id="stateLbl"></b><span class="spacer"></span>
+        <label style="margin:0">Питань</label><input type="number" id="nQ" min="5" max="75" style="width:80px">
+        <label style="margin:0">Хвилин</label><input type="number" id="nMin" min="5" max="180" style="width:80px">
+        <button class="ghost" id="saveBtn">Зберегти</button>
+        <button id="toggleBtn"></button>
+      </div>
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="tabs">
+      <button class="on" data-t="res">Студенти</button>
+      <button data-t="items">Питання</button>
+      <span class="spacer"></span>
+      <select id="grpF" style="width:auto"></select>
+      <button class="ghost" id="refreshBtn">Оновити</button>
+      <button id="xlsxBtn">Excel</button>
+    </div>
+    <div class="tablebox" id="tbl"></div>
+    <div id="mainErr" class="err hidden"></div>
+  </section>
+</div>
+
+<div class="modal hidden" id="modal"><div class="card">
+  <h3 style="margin-top:0">Скинути спробу?</h3>
+  <p id="modalText"></p>
+  <div class="row"><button class="ghost" id="mNo">Скасувати</button><span class="spacer"></span><button class="danger" id="mYes">Скинути</button></div>
+</div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let PW = "", D = null, tab = "res", resetId = null;
+const fmt = (t) => (t ? new Date(t).toLocaleString("uk-UA", { dateStyle: "short", timeStyle: "short" }) : "");
+
+function err(box, m) { $(box).textContent = m; $(box).classList.toggle("hidden", !m); }
+
+async function load() {
+  try { D = await rpc("teacher_results", { p_pw: PW }); D.rows.sort((a, b) => a.grp.localeCompare(b.grp) || a.name.localeCompare(b.name, "uk")); }
+  catch (e) { return err(PW && !D ? "loginErr" : "mainErr", e.message); }
+  try { sessionStorage.setItem("edki:pw", PW); } catch (e) {}
+  $("login").classList.add("hidden"); $("main").classList.remove("hidden"); err("mainErr", "");
+  const s = D.settings;
+  $("stateLbl").innerHTML = s.is_open ? '<span class="pill ok">Тест відкритий</span>' : '<span class="pill none">Тест закритий</span>';
+  $("toggleBtn").textContent = s.is_open ? "Закрити тест" : "Відкрити тест";
+  $("toggleBtn").className = s.is_open ? "danger" : "";
+  $("nQ").value = s.n_questions; $("nMin").value = s.time_limit_min;
+  const groups = [...new Set(D.rows.map((r) => r.grp))], cur = $("grpF").value;
+  $("grpF").innerHTML = '<option value="">Усі групи</option>' + groups.map((g) => `<option ${g === cur ? "selected" : ""}>${esc(g)}</option>`).join("");
+  render();
+}
+
+function rowsF() { const g = $("grpF").value; return D.rows.filter((r) => !g || r.grp === g); }
+
+function render() {
+  const rows = rowsF(), done = rows.filter((r) => r.finished_at), pcts = done.map((r) => r.pct);
+  const avg = pcts.length ? (pcts.reduce((a, b) => a + b, 0) / pcts.length).toFixed(1) : "—";
+  $("stats").innerHTML = [["Студентів", rows.length], ["Здали", done.length], ["Зараз проходять", rows.filter((r) => r.started_at && !r.finished_at).length],
+    ["Середній %", avg], ["Не склали (<60%)", done.filter((r) => r.pct < 60).length]]
+    .map(([k, v]) => `<div class="stat"><span class="small muted">${k}</span><b>${v}</b></div>`).join("");
+
+  if (tab === "res") {
+    $("tbl").innerHTML = `<table><thead><tr><th>#</th><th>Група</th><th>Студент</th><th>Статус</th><th class="num">Правильних</th><th class="num">%</th><th>Оцінка</th><th>ECTS</th><th>Початок</th><th class="num">Хв</th><th>IP</th><th>Пристрій</th><th></th></tr></thead><tbody>` +
+      rows.map((r, i) => {
+        const st = r.finished_at ? (r.pct >= 60 ? '<span class="pill ok">склав</span>' : '<span class="pill bad">не склав</span>')
+          : r.started_at ? '<span class="pill wait">проходить</span>' : '<span class="pill none">не почав</span>';
+        return `<tr><td>${i + 1}</td><td>${esc(r.grp)}</td><td>${esc(r.name)}</td><td>${st}</td>
+          <td class="num">${r.finished_at ? r.n_correct + "/" + r.n_total : ""}</td><td class="num">${r.pct ?? ""}</td>
+          <td>${esc(r.nat || "")}</td><td>${esc(r.ects || "")}</td><td>${fmt(r.started_at)}</td><td class="num">${r.minutes ?? ""}</td>
+          <td class="small">${esc(r.ip || "")}${r.ip_finish && r.ip_finish !== r.ip ? " → " + esc(r.ip_finish) : ""}</td>
+          <td><div class="ua" title="${esc(r.user_agent || "")}">${esc(device(r.user_agent))}</div></td>
+          <td>${r.started_at ? `<button class="ghost small" style="padding:4px 10px" data-reset="${r.id}">Скинути</button>` : ""}</td></tr>`;
+      }).join("") + "</tbody></table>";
+  } else {
+    $("tbl").innerHTML = `<table><thead><tr><th>#</th><th>Тема</th><th>Питання</th><th class="num">Показано</th><th class="num">Правильно</th><th class="num">%</th></tr></thead><tbody>` +
+      D.items.map((q) => `<tr><td>${q.id}</td><td>${esc(q.topic)}</td><td>${esc(q.text)}</td><td class="num">${q.shown}</td><td class="num">${q.correct}</td><td class="num">${q.pct ?? "—"}</td></tr>`).join("") + "</tbody></table>";
+  }
+}
+
+function device(ua) {
+  if (!ua) return "";
+  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "";
+  const br = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
+  return [os, br].filter(Boolean).join(" · ") || ua;
+}
+
+$("loginBtn").onclick = () => { PW = $("pw").value; err("loginErr", ""); load(); };
+$("pw").onkeydown = (e) => { if (e.key === "Enter") $("loginBtn").click(); };
+$("refreshBtn").onclick = load;
+$("grpF").onchange = render;
+document.querySelectorAll(".tabs [data-t]").forEach((b) => (b.onclick = () => {
+  tab = b.dataset.t; document.querySelectorAll(".tabs [data-t]").forEach((x) => x.classList.toggle("on", x === b)); render();
+}));
+async function setSettings(open) {
+  try { await rpc("teacher_set", { p_pw: PW, p_open: open, p_n: +$("nQ").value, p_minutes: +$("nMin").value }); load(); }
+  catch (e) { err("mainErr", e.message); }
+}
+$("toggleBtn").onclick = () => setSettings(!D.settings.is_open);
+$("saveBtn").onclick = () => setSettings(D.settings.is_open);
+
+$("tbl").onclick = (e) => {
+  const id = e.target.dataset.reset; if (!id) return;
+  const r = D.rows.find((x) => String(x.id) === id); resetId = r.id;
+  $("modalText").textContent = `${r.name} (${r.grp}): спробу буде видалено, студент зможе пройти тест заново з новим набором питань.`;
+  $("modal").classList.remove("hidden");
+};
+$("mNo").onclick = () => $("modal").classList.add("hidden");
+$("mYes").onclick = async () => {
+  $("modal").classList.add("hidden");
+  try { await rpc("teacher_reset", { p_pw: PW, p_student: resetId }); load(); } catch (e) { err("mainErr", e.message); }
+};
+
+$("xlsxBtn").onclick = () => {
+  const res = rowsF().map((r, i) => ({
+    "№": i + 1, "Група": r.grp, "ПІБ": r.name,
+    "Статус": r.finished_at ? "здано" : r.started_at ? "розпочато, не здано" : "не проходив",
+    "Правильних": r.n_correct ?? "", "З": r.n_total ?? "", "%": r.pct ?? "", "Оцінка": r.nat || "", "ECTS": r.ects || "",
+    "Початок": fmt(r.started_at), "Завершення": fmt(r.finished_at), "Тривалість, хв": r.minutes ?? "",
+    "IP (початок)": r.ip || "", "IP (здача)": r.ip_finish || "", "Пристрій": r.user_agent || "",
+  }));
+  const items = D.items.map((q) => ({ "№": q.id, "Тема": q.topic, "Питання": q.text, "Показано": q.shown, "Правильно": q.correct, "%": q.pct ?? "" }));
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.json_to_sheet(res); ws1["!cols"] = [5, 10, 38, 18, 11, 5, 7, 13, 6, 16, 16, 12, 15, 15, 40].map((w) => ({ wch: w }));
+  const ws2 = XLSX.utils.json_to_sheet(items); ws2["!cols"] = [5, 22, 90, 10, 10, 7].map((w) => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, ws1, "Оцінки"); XLSX.utils.book_append_sheet(wb, ws2, "Аналіз питань");
+  const g = $("grpF").value || "усі";
+  XLSX.writeFile(wb, `EDKI_dermatologia_${g === "усі" ? "all" : g}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+};
+
+try { const p = sessionStorage.getItem("edki:pw"); if (p) { PW = p; load(); } } catch (e) {}
+</script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тест ЄДКІ — Дерматологія</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script src="common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1 id="title">Тест у форматі ЄДКІ</h1>
+    <span class="sub">Кафедра епізоотології та інфекційних хвороб БНАУ</span>
+  </header>
+
+  <!-- 1. Вибір студента -->
+  <section id="s-pick" class="card">
+    <p class="muted" style="margin-top:0">Оберіть свою групу і своє прізвище. Тест проходиться <b>один раз</b>; після здачі прізвище блокується.</p>
+    <label for="grp">Група</label>
+    <select id="grp"><option value="">— оберіть групу —</option></select>
+    <label for="stu">Студент</label>
+    <select id="stu" disabled><option value="">— спершу оберіть групу —</option></select>
+    <div class="confirm hidden" id="confirmBox">
+      <label style="margin:0;font-weight:400"><input type="checkbox" id="confirmChk">
+        Я, <b id="confirmName"></b>, проходжу тест особисто і самостійно.</label>
+    </div>
+    <div class="row" style="margin-top:18px">
+      <span class="muted small" id="rules"></span><span class="spacer"></span>
+      <button id="startBtn" disabled>Почати тест</button>
+    </div>
+    <div id="pickErr" class="err hidden"></div>
+  </section>
+
+  <!-- 2. Тест -->
+  <section id="s-test" class="hidden">
+    <div class="bar">
+      <span class="who" id="who"></span><span class="spacer"></span>
+      <span class="small muted" id="progress"></span>
+      <span class="timer" id="timer">--:--</span>
+    </div>
+    <div class="card">
+      <div class="qnum" id="qnum"></div>
+      <p class="qtext" id="qtext"></p>
+      <div id="opts"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="ghost" id="prevBtn">← Назад</button><span class="spacer"></span>
+        <button class="ghost" id="nextBtn">Далі →</button>
+      </div>
+      <div class="nav" id="nav"></div>
+      <div class="row" style="margin-top:22px">
+        <span class="spacer"></span><button id="finishBtn">Завершити тест</button>
+      </div>
+      <div id="testErr" class="err hidden"></div>
+    </div>
+  </section>
+
+  <!-- 3. Результат -->
+  <section id="s-done" class="card hidden">
+    <div class="muted">Тест здано</div>
+    <div class="result-big" id="rPct"></div>
+    <div class="kv" id="rKv"></div>
+    <p class="muted small" style="margin-bottom:0">Сфотографуйте цей екран — це ваша квитанція.</p>
+  </section>
+</div>
+
+<div class="modal hidden" id="modal"><div class="card">
+  <h3 style="margin-top:0">Завершити тест?</h3>
+  <p id="modalText"></p>
+  <div class="row"><button class="ghost" id="mNo">Повернутися</button><span class="spacer"></span><button id="mYes">Так, здати</button></div>
+</div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LETTERS = ["A", "B", "C", "D", "E"];
+let students = [], S = null, cur = 0, tick = null, submitting = false;
+
+$("title").textContent = EDKI_CONFIG.TITLE || "Тест у форматі ЄДКІ";
+
+function show(id) { ["s-pick", "s-test", "s-done"].forEach((s) => $(s).classList.toggle("hidden", s !== id)); }
+function err(box, msg) { $(box).textContent = msg; $(box).classList.toggle("hidden", !msg); }
+
+async function loadStudents() {
+  try {
+    students = await rpc("public_students");
+    students.sort((a, b) => a.grp.localeCompare(b.grp) || a.name.localeCompare(b.name, "uk"));
+  } catch (e) { return err("pickErr", "Не вдалося завантажити списки: " + e.message); }
+  const open = students.length && students[0].is_open;
+  const groups = [...new Set(students.map((s) => s.grp))];
+  $("grp").innerHTML = '<option value="">— оберіть групу —</option>' + groups.map((g) => `<option>${esc(g)}</option>`).join("");
+  if (students.length) $("rules").textContent = `${students[0].n_q} питань · ${students[0].mins} хв`;
+  if (!open) err("pickErr", "Тест зараз закритий. Дочекайтеся, поки викладач його відкриє, і оновіть сторінку.");
+}
+
+$("grp").onchange = () => {
+  const g = $("grp").value;
+  const list = students.filter((s) => s.grp === g);
+  $("stu").innerHTML = '<option value="">— оберіть себе —</option>' +
+    list.map((s) => `<option value="${s.id}" ${s.done ? "disabled" : ""}>${esc(s.name)}${s.done ? " — пройдено" : ""}</option>`).join("");
+  $("stu").disabled = !g; onPick();
+};
+$("stu").onchange = onPick;
+$("confirmChk").onchange = onPick;
+function onPick() {
+  const s = students.find((x) => String(x.id) === $("stu").value);
+  $("confirmBox").classList.toggle("hidden", !s);
+  if (s) $("confirmName").textContent = s.name; else $("confirmChk").checked = false;
+  $("startBtn").disabled = !(s && $("confirmChk").checked);
+}
+
+$("startBtn").onclick = async () => {
+  const sid = Number($("stu").value);
+  $("startBtn").disabled = true; err("pickErr", "");
+  try {
+    const data = await rpc("start_attempt", { p_student: sid });
+    const saved = store.get("edki:" + data.attempt) || {};
+    S = { ...data, sid, name: students.find((x) => x.id === sid).name, answers: saved.answers || {} };
+    // порядок варіантів фіксуємо на першому старті, щоб він не змінювався після оновлення сторінки
+    if (saved.order) S.questions.forEach((q) => { const o = saved.order[q.id]; if (o) q.options.sort((a, b) => o.indexOf(a.k) - o.indexOf(b.k)); });
+    persist();
+    store.set("edki:last", { sid, attempt: data.attempt });
+    beginTest();
+  } catch (e) { err("pickErr", e.message); $("startBtn").disabled = false; }
+};
+
+function persist() {
+  const order = {}; S.questions.forEach((q) => (order[q.id] = q.options.map((o) => o.k)));
+  store.set("edki:" + S.attempt, { answers: S.answers, order });
+}
+
+function beginTest() {
+  show("s-test");
+  $("who").textContent = S.name;
+  $("nav").innerHTML = S.questions.map((_, i) => `<button data-i="${i}">${i + 1}</button>`).join("");
+  $("nav").onclick = (e) => { if (e.target.dataset.i) go(+e.target.dataset.i); };
+  go(0);
+  clearInterval(tick); tick = setInterval(updTimer, 500); updTimer();
+  window.onbeforeunload = () => "Тест ще не здано.";
+}
+
+function go(i) {
+  cur = Math.max(0, Math.min(S.questions.length - 1, i));
+  const q = S.questions[cur];
+  $("qnum").textContent = `Питання ${cur + 1} з ${S.questions.length}`;
+  $("qtext").textContent = q.text;
+  $("opts").innerHTML = q.options.map((o, j) =>
+    `<div class="opt ${S.answers[q.id] === o.k ? "sel" : ""}" data-k="${o.k}"><span class="L">${LETTERS[j]}</span><span>${esc(o.t)}</span></div>`).join("");
+  $("prevBtn").disabled = cur === 0; $("nextBtn").disabled = cur === S.questions.length - 1;
+  updNav();
+}
+$("opts").onclick = (e) => {
+  const el = e.target.closest(".opt"); if (!el) return;
+  S.answers[S.questions[cur].id] = Number(el.dataset.k); persist(); go(cur);
+};
+$("prevBtn").onclick = () => go(cur - 1);
+$("nextBtn").onclick = () => go(cur + 1);
+
+function updNav() {
+  const n = Object.keys(S.answers).length;
+  $("progress").textContent = `Відповіді: ${n}/${S.questions.length}`;
+  [...$("nav").children].forEach((b, i) => {
+    b.classList.toggle("ans", S.questions[i].id in S.answers);
+    b.classList.toggle("cur", i === cur);
+  });
+}
+
+function updTimer() {
+  const left = Math.floor((new Date(S.deadline) - Date.now()) / 1000);
+  if (left <= 0) { $("timer").textContent = "00:00"; clearInterval(tick); return submit(true); }
+  $("timer").textContent = String(Math.floor(left / 60)).padStart(2, "0") + ":" + String(left % 60).padStart(2, "0");
+  $("timer").classList.toggle("low", left < 300);
+}
+
+$("finishBtn").onclick = () => {
+  const miss = S.questions.length - Object.keys(S.answers).length;
+  $("modalText").textContent = miss ? `Без відповіді лишилося питань: ${miss}. Після здачі змінити відповіді не можна.` : "Після здачі змінити відповіді не можна.";
+  $("modal").classList.remove("hidden");
+};
+$("mNo").onclick = () => $("modal").classList.add("hidden");
+$("mYes").onclick = () => { $("modal").classList.add("hidden"); submit(false); };
+
+async function submit(auto) {
+  if (submitting) return; submitting = true; err("testErr", "");
+  $("finishBtn").disabled = true;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const r = await rpc("submit_attempt", { p_attempt: S.attempt, p_token: S.token, p_answers: S.answers });
+      clearInterval(tick); window.onbeforeunload = null;
+      store.del("edki:" + S.attempt); store.del("edki:last");
+      return showResult(r, auto);
+    } catch (e) {
+      if (/уже здано/.test(e.message)) { window.onbeforeunload = null; return err("testErr", "Тест уже було здано раніше."); }
+      err("testErr", "Не вдалося надіслати відповіді (" + e.message + "). Повторюю… Не закривайте сторінку.");
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  submitting = false; $("finishBtn").disabled = false;
+  err("testErr", "Немає зв'язку із сервером. Відповіді збережено в браузері — натисніть «Завершити тест» ще раз.");
+}
+
+function showResult(r, auto) {
+  show("s-done");
+  $("rPct").textContent = r.pct + "%";
+  const g = students.find((x) => x.id === S.sid)?.grp || "";
+  const rows = [["Студент", S.name], ["Група", g], ["Правильних", `${r.n_correct} з ${r.n_total}`],
+    ["Оцінка", `${r.nat} (${r.ects})`], ["Здано", new Date().toLocaleString("uk-UA") + (auto ? " (час вийшов)" : "")],
+    ["Код спроби", S.attempt.slice(0, 8).toUpperCase()]];
+  $("rKv").innerHTML = rows.map(([k, v]) => `<div>${k}</div><div><b>${esc(v)}</b></div>`).join("");
+}
+
+loadStudents().then(() => {
+  // якщо сторінку оновили під час тесту — пропонуємо продовжити
+  const last = store.get("edki:last");
+  const s = last && students.find((x) => x.id === last.sid && !x.done);
+  if (s) {
+    $("grp").value = s.grp; $("grp").onchange(); $("stu").value = String(s.id); $("confirmChk").checked = true; onPick();
+    $("startBtn").textContent = "Продовжити тест";
+  }
+});
+</script>
+</body>
+</html>
