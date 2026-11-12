@@ -4,7 +4,7 @@ from xml.sax.saxutils import escape
 root = pathlib.Path(__file__).resolve().parent.parent
 qs = json.loads(pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else root / 'private/data/questions.json').read_text())
 out = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
-BASE = 'ЄДКІ Інфекційна дерматологія'
+BASE = sys.argv[3] if len(sys.argv) > 3 else 'ЄДКІ Інфекційна дерматологія'
 cur = None
 for i, q in enumerate(qs, 1):
     if q['t'] != cur:
