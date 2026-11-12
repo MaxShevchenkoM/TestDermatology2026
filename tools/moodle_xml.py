@@ -2,7 +2,7 @@
 import json, base64, pathlib, sys
 from xml.sax.saxutils import escape
 root = pathlib.Path(__file__).resolve().parent.parent
-qs = json.loads((root / 'private/data/questions.json').read_text())
+qs = json.loads(pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else root / 'private/data/questions.json').read_text())
 out = ['<?xml version="1.0" encoding="UTF-8"?>', '<quiz>']
 BASE = 'ЄДКІ Інфекційна дерматологія'
 cur = None
